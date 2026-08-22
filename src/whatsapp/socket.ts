@@ -35,7 +35,7 @@ export class WhatsAppSocket extends EventEmitter {
         auth: state,
         logger: logger.child({ account: this.accountConfig.name }),
         printQRInTerminal: false,
-        browser: ['WhatsApp Bot', 'Chrome', '1.0.0'],
+        browser: ['Ubuntu', 'Chrome', '20.0.04'],
         keepAliveIntervalMs: 30000,
         emitOwnEvents: false,
         qrTimeout: 40000,
@@ -88,11 +88,13 @@ export class WhatsAppSocket extends EventEmitter {
         logger.warn({ account: this.accountConfig.name, reason, statusCode, errMsg }, 'Disconnected');
         this.emit('disconnected', reason);
 
-        // 515 tras "pairing configured" es normal: Baileys necesita restart, no es error final
+        // 515 tras "pairing configured" es normal: Baileys necesita restart inmediato con misma sesión
         if (is515) {
           this.latestQR = null;
-          logger.info({ account: this.accountConfig.name }, '515 restart required — reconnecting in 2s without clearing session');
-          setTimeout(() => this.connect().catch(e => this.emit('error', e)), 2000);
+          this.cleanup();
+          logger.info({ account: this.accountConfig.name }, '515 restart required — reconnecting immediately');
+          // Reconectar inmediato sin delay (misma carpeta auth)
+          this.connect().catch(e => this.emit('error', e));
           return;
         }
 
