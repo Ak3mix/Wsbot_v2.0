@@ -73,8 +73,13 @@ export class WhatsAppManager extends EventEmitter {
     }
     // Intentar usar QR cacheado primero
     socket.requestQR();
-    // Si no había QR cacheado, requestQR limpió el socket; reconectar
+    // Si no había QR cacheado, requestQR limpió el socket; borrar sesión huérfana y reconectar
     if (!socket.getQR()) {
+      const config = this.accountConfigs.get(account);
+      if (config) {
+        const { deleteSession } = require('./session-store');
+        try { deleteSession(config.sessionName); } catch {}
+      }
       await socket.connect();
     }
     return { ok: true };

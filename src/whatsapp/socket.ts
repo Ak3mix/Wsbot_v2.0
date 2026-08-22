@@ -123,12 +123,13 @@ export class WhatsAppSocket extends EventEmitter {
       this.qrRequested = false;
       return;
     }
-    // Si no hay QR, forzar reconexión para generar uno nuevo
+    // Si no hay QR, forzar cierre y limpieza (incluyendo QR cache)
+    this.latestQR = null;
     if (this.socket) {
       try { this.socket.ws.close(); } catch {}
       this.cleanup();
     }
-    // El caller (manager) se encargará de llamar connect()
+    // El caller (manager) se encargará de borrar sesión y llamar connect()
   }
 
   getQR(): string | null {
@@ -141,11 +142,22 @@ export class WhatsAppSocket extends EventEmitter {
 
   async disconnect(): Promise<void> {
     if (this.socket) {
-      await this.socket.logout();
-      this.socket.ws.close();
+      try {
+        await this.socket.logout();
+      } catch (e) {
+        logger.warn({ account: this.accountConfig.name, error: e }, 'logout failed, forcing cleanup');
+      }
+      try { this.socket.ws.close(); } catch {}
       this.cleanup();
     }
-    clearAuthState(this.accountConfig.sessionName);
+    // Siempre borrar sesión aunque logout falle
+    try {
+      clearAuthState(this.accountConfig.sessionName);
+      this.latestQR = null;
+      this.groupNames.clear();
+    } catch (e) {
+      logger.error({ account: this.accountConfig.name, error: e }, 'Failed to clear auth state');
+    }
     this.emit('disconnected', 'user_requested');
   }
 
