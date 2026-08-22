@@ -15,6 +15,7 @@ export class WhatsAppSocket extends EventEmitter {
   private reconnectDelay = 5000;
   private isConnecting = false;
   private qrRequested = false;
+  private latestQR: string | null = null;
 
   constructor(accountConfig: CompiledAccountConfig) {
     super();
@@ -37,6 +38,8 @@ export class WhatsAppSocket extends EventEmitter {
         browser: ['WhatsApp Bot', 'Chrome', '1.0.0'],
         keepAliveIntervalMs: 30000,
         emitOwnEvents: false,
+        qrTimeout: 40000,
+        connectTimeoutMs: 40000,
       });
 
       this.setupEventHandlers(saveCreds);
@@ -58,6 +61,7 @@ export class WhatsAppSocket extends EventEmitter {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
+        this.latestQR = qr;
         if (this.qrRequested) {
           this.emit('qr', qr);
           this.qrRequested = false;
@@ -111,13 +115,26 @@ export class WhatsAppSocket extends EventEmitter {
 
   requestQR(): void {
     this.qrRequested = true;
-    if (this.socket) {
-      this.socket.ev.emit('connection.update', { qr: undefined });
+    // Si ya tenemos un QR reciente, enviarlo de inmediato
+    if (this.latestQR) {
+      this.emit('qr', this.latestQR);
+      this.qrRequested = false;
+      return;
     }
+    // Si no hay QR, forzar reconexión para generar uno nuevo
+    if (this.socket) {
+      try { this.socket.ws.close(); } catch {}
+      this.cleanup();
+    }
+    // El caller (manager) se encargará de llamar connect()
   }
 
   getQR(): string | null {
-    return null;
+    return this.latestQR;
+  }
+
+  clearQR(): void {
+    this.latestQR = null;
   }
 
   async disconnect(): Promise<void> {

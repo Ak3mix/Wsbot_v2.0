@@ -33,8 +33,20 @@ export function createTelegramBot(manager: WhatsAppManager): Telegraf {
       return;
     }
 
-    await ctx.reply(`Generating QR for ${account} account...`);
-    manager.requestQR(account);
+    const result = await manager.requestQR(account);
+    if (!result.ok) {
+      if (result.reason === 'already_connected') {
+        await ctx.reply(`⚠️ ${account} ya está conectado. Usa /disconnect ${account} primero si quieres reconectar.`);
+        return;
+      }
+      if (result.reason === 'has_session') {
+        await ctx.reply(`⚠️ ${account} ya tiene sesión guardada. Usa /disconnect ${account} para borrarla y luego /qr ${account}.`);
+        return;
+      }
+      await ctx.reply(`⚠️ No se pudo generar QR para ${account}: ${result.reason}`);
+      return;
+    }
+    await ctx.reply(`⏳ Generando QR para ${account}... (expira en 40s)`);
   });
 
   bot.command('status', (ctx) => {

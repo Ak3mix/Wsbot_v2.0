@@ -55,11 +55,29 @@ export class WhatsAppManager extends EventEmitter {
     }
   }
 
-  requestQR(account: 'work' | 'personal'): void {
-    const socket = this.sockets.get(account);
-    if (socket) {
-      socket.requestQR();
+  async requestQR(account: 'work' | 'personal'): Promise<{ ok: boolean; reason?: string }> {
+    const status = this.getStatus(account);
+    if (status.connected) {
+      return { ok: false, reason: 'already_connected' };
     }
+    if (status.hasSession) {
+      return { ok: false, reason: 'has_session' };
+    }
+    let socket = this.sockets.get(account);
+    if (!socket) {
+      const config = this.accountConfigs.get(account);
+      if (!config) return { ok: false, reason: 'unknown_account' };
+      socket = new WhatsAppSocket(config);
+      this.setupSocketEvents(account, socket);
+      this.sockets.set(account, socket);
+    }
+    // Intentar usar QR cacheado primero
+    socket.requestQR();
+    // Si no había QR cacheado, requestQR limpió el socket; reconectar
+    if (!socket.getQR()) {
+      await socket.connect();
+    }
+    return { ok: true };
   }
 
   getStatus(account: 'work' | 'personal'): { connected: boolean; user?: string; hasSession: boolean } {
