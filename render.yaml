@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: whatsapp-telegram-bot
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/index.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+    # Add these in Render Dashboard (Settings > Environment Variables):
+    # TELEGRAM_BOT_TOKEN=your_bot_token
+    # TELEGRAM_GROUP_ID=your_group_id
+    # WORK_SESSION_NAME=work
+    # PERSONAL_SESSION_NAME=personal
+    # WORK_AUTH_USERS=["5352829928@c.us"]
+    # WORK_AUTH_GROUPS=["120363028379671283@g.us"]
+    # PERSONAL_AUTH_USERS=["5352829928@c.us"]
+    # PERSONAL_AUTH_GROUPS=["120363028379671283@g.us"]
+    # WORK_KEYWORDS=[{"keywords":["hola","buenos"],"responses":["¡Hola! ¿En qué te ayudo?"]}]
+    # PERSONAL_KEYWORDS=[{"keywords":["urgente"],"responses":["Lo reviso ya"]}]
