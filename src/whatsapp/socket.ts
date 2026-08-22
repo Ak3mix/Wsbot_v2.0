@@ -27,7 +27,7 @@ export class WhatsAppSocket extends EventEmitter {
     this.isConnecting = true;
 
     try {
-      const { state, saveCreds } = createAuthState(this.accountConfig.sessionName);
+      const { state, saveCreds } = await createAuthState(this.accountConfig.sessionName);
       const { version } = await fetchLatestBaileysVersion();
 
       this.socket = makeWASocket({
@@ -152,7 +152,7 @@ export class WhatsAppSocket extends EventEmitter {
     }
     // Siempre borrar sesión aunque logout falle
     try {
-      clearAuthState(this.accountConfig.sessionName);
+      await clearAuthState(this.accountConfig.sessionName);
       this.latestQR = null;
       this.groupNames.clear();
     } catch (e) {
