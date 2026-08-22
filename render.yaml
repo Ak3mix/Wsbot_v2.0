@@ -4,6 +4,7 @@ services:
     runtime: node
     plan: free
     region: oregon
+    rootDir: .
     buildCommand: npm ci && npm run build
     startCommand: node dist/index.js
     healthCheckPath: /health
