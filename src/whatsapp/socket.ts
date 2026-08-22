@@ -16,6 +16,7 @@ export class WhatsAppSocket extends EventEmitter {
   private qrRequested = false;
   private latestQR: string | null = null;
   private groupNames = new Map<string, string>();
+  private suppressNextConnected = false;
 
   constructor(accountConfig: CompiledAccountConfig) {
     super();
@@ -72,7 +73,12 @@ export class WhatsAppSocket extends EventEmitter {
         this.isConnecting = false;
         this.reconnectAttempts = 0;
         logger.info({ account: this.accountConfig.name }, 'Connected');
-        this.emit('connected');
+        if (this.suppressNextConnected) {
+          this.suppressNextConnected = false;
+          logger.info({ account: this.accountConfig.name }, 'Suppressing connected notification after 515 restart');
+        } else {
+          this.emit('connected');
+        }
         // Cache group names in background (no hot-path latency)
         this.cacheGroupNames().catch(e => logger.warn({ account: this.accountConfig.name, error: e }, 'Failed to cache group names'));
       } else if (connection === 'close') {
@@ -85,18 +91,18 @@ export class WhatsAppSocket extends EventEmitter {
                        statusCode === DisconnectReason.connectionReplaced ? 'replaced' :
                        is515 ? 'stream_515' : 'unknown';
         
-        logger.warn({ account: this.accountConfig.name, reason, statusCode, errMsg }, 'Disconnected');
-        this.emit('disconnected', reason);
-
-        // 515 tras "pairing configured" es normal: Baileys necesita restart inmediato con misma sesión
+        // 515 es restart normal post-pairing: no notificar como desconexión, reconectar silencioso
         if (is515) {
           this.latestQR = null;
+          this.suppressNextConnected = true;
           this.cleanup();
-          logger.info({ account: this.accountConfig.name }, '515 restart required — reconnecting immediately');
-          // Reconectar inmediato sin delay (misma carpeta auth)
+          logger.info({ account: this.accountConfig.name }, '515 restart required — silent reconnect');
           this.connect().catch(e => this.emit('error', e));
           return;
         }
+
+        logger.warn({ account: this.accountConfig.name, reason, statusCode, errMsg }, 'Disconnected');
+        this.emit('disconnected', reason);
 
         if (reason !== 'logged_out' && reason !== 'replaced') {
           this.scheduleReconnect();

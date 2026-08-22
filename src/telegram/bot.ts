@@ -140,11 +140,22 @@ export function createTelegramBot(manager: WhatsAppManager): Telegraf {
     }
   });
 
+  const lastDisconnectNotify = new Map<string, number>();
+  const lastConnectedNotify = new Map<string, number>();
   manager.on('connected', async (account: 'work' | 'personal') => {
+    const now = Date.now();
+    const last = lastConnectedNotify.get(account) ?? 0;
+    if (now - last < 30000) return; // cooldown 30s
+    lastConnectedNotify.set(account, now);
     await bot.telegram.sendMessage(authorizedGroupId, `✅ ${account} conectado`);
   });
 
   manager.on('disconnected', async (account: 'work' | 'personal', reason: string) => {
+    const key = `${account}:${reason}`;
+    const now = Date.now();
+    const last = lastDisconnectNotify.get(key) ?? 0;
+    if (now - last < 60000) return; // cooldown 60s por razón
+    lastDisconnectNotify.set(key, now);
     const reasonText = reason === 'user_requested' ? 'por usuario' : 
                        reason === 'logged_out' ? 'sesión cerrada' : 
                        reason === 'replaced' ? 'sesión reemplazada' : reason;
