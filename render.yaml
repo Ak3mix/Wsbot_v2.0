@@ -4,9 +4,8 @@ services:
     runtime: node
     plan: free
     region: oregon
-    rootDir: .
-    buildCommand: npm ci && npm run build
-    startCommand: node dist/index.js
+    buildCommand: npm ci && npm run build && ls -la dist/ && echo "---" && ls -la src/dist/ 2>/dev/null || true
+    startCommand: node dist/index.js || node /opt/render/project/dist/index.js || node src/dist/index.js
     healthCheckPath: /health
     autoDeploy: true
     envVars:
