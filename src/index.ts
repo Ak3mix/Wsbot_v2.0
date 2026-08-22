@@ -2,9 +2,7 @@ import { WhatsAppManager } from './whatsapp/manager';
 import { createTelegramBot } from './telegram/bot';
 import { createHttpServer } from './server/http';
 import { config, compiledConfig } from './config';
-import pino from 'pino';
-
-const logger = pino({ name: 'main' });
+import { logger } from './utils/logger';
 
 async function main(): Promise<void> {
   logger.info('Starting WhatsApp-Telegram Bot...');

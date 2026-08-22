@@ -1,8 +1,7 @@
 import express, { Request, Response } from 'express';
 import { WhatsAppManager } from '../whatsapp/manager';
-import pino from 'pino';
-
-const logger = pino({ name: 'http-server' });
+import { logger as baseLogger } from '../utils/logger';
+const logger = baseLogger.child({ name: 'http-server' });
 const startTime = Date.now();
 
 export function createHttpServer(manager: WhatsAppManager, port: number): express.Express {

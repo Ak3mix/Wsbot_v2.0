@@ -3,9 +3,8 @@ import { WASocket, makeWASocket, DisconnectReason, fetchLatestBaileysVersion, Co
 import { createAuthState, clearAuthState } from './auth-state';
 import { createMessageHandler } from './message-handler';
 import { CompiledAccountConfig } from '../config/types';
-import pino from 'pino';
-
-const logger = pino({ name: 'whatsapp-socket' });
+import { logger as baseLogger } from '../utils/logger';
+const logger = baseLogger.child({ name: 'whatsapp-socket' });
 
 export class WhatsAppSocket extends EventEmitter {
   private socket: WASocket | null = null;
@@ -16,6 +15,7 @@ export class WhatsAppSocket extends EventEmitter {
   private isConnecting = false;
   private qrRequested = false;
   private latestQR: string | null = null;
+  private groupNames = new Map<string, string>();
 
   constructor(accountConfig: CompiledAccountConfig) {
     super();
@@ -73,6 +73,8 @@ export class WhatsAppSocket extends EventEmitter {
         this.reconnectAttempts = 0;
         logger.info({ account: this.accountConfig.name }, 'Connected');
         this.emit('connected');
+        // Cache group names in background (no hot-path latency)
+        this.cacheGroupNames().catch(e => logger.warn({ account: this.accountConfig.name, error: e }, 'Failed to cache group names'));
       } else if (connection === 'close') {
         this.isConnecting = false;
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
@@ -152,6 +154,26 @@ export class WhatsAppSocket extends EventEmitter {
       connected: this.socket?.user !== undefined,
       user: this.socket?.user?.id,
     };
+  }
+
+  getGroupName(jid: string): string {
+    return this.groupNames.get(jid) ?? jid;
+  }
+
+  private async cacheGroupNames(): Promise<void> {
+    if (!this.socket) return;
+    const groups = Array.from(this.accountConfig.authorizedGroups);
+    for (const jid of groups) {
+      try {
+        const meta = await this.socket.groupMetadata(jid);
+        if (meta.subject) this.groupNames.set(jid, meta.subject);
+      } catch (e) {
+        logger.debug({ account: this.accountConfig.name, jid, error: e }, 'Failed to fetch group name');
+      }
+    }
+    if (this.groupNames.size > 0) {
+      logger.info({ account: this.accountConfig.name, count: this.groupNames.size }, 'Cached group names');
+    }
   }
 
   private scheduleReconnect(): void {

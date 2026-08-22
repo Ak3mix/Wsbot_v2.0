@@ -102,4 +102,8 @@ export class WhatsAppManager extends EventEmitter {
   getSocket(account: 'work' | 'personal'): WhatsAppSocket | undefined {
     return this.sockets.get(account);
   }
+
+  getGroupName(account: 'work' | 'personal', jid: string): string {
+    return this.sockets.get(account)?.getGroupName(jid) ?? jid;
+  }
 }
