@@ -51,6 +51,13 @@ export class WhatsAppManager extends EventEmitter {
       if (socket) {
         await socket.disconnect();
         this.sockets.delete(acc);
+      } else {
+        // Aunque no haya socket en memoria, borra sesión en disco si existe (caso QR fallido)
+        const config = this.accountConfigs.get(acc);
+        if (config) {
+          const { deleteSession } = require('./session-store');
+          try { deleteSession(config.sessionName); } catch {}
+        }
       }
     }
   }
