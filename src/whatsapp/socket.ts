@@ -78,12 +78,23 @@ export class WhatsAppSocket extends EventEmitter {
       } else if (connection === 'close') {
         this.isConnecting = false;
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
+        const errMsg = (lastDisconnect?.error as any)?.message ?? '';
+        const is515 = statusCode === 515 || errMsg.includes('515') || errMsg.includes('Stream Errored');
         const reason = statusCode === DisconnectReason.loggedOut ? 'logged_out' : 
                        statusCode === DisconnectReason.connectionLost ? 'connection_lost' : 
-                       statusCode === DisconnectReason.connectionReplaced ? 'replaced' : 'unknown';
+                       statusCode === DisconnectReason.connectionReplaced ? 'replaced' :
+                       is515 ? 'stream_515' : 'unknown';
         
-        logger.warn({ account: this.accountConfig.name, reason, statusCode }, 'Disconnected');
+        logger.warn({ account: this.accountConfig.name, reason, statusCode, errMsg }, 'Disconnected');
         this.emit('disconnected', reason);
+
+        // 515 tras "pairing configured" es normal: Baileys necesita restart, no es error final
+        if (is515) {
+          this.latestQR = null;
+          logger.info({ account: this.accountConfig.name }, '515 restart required — reconnecting in 2s without clearing session');
+          setTimeout(() => this.connect().catch(e => this.emit('error', e)), 2000);
+          return;
+        }
 
         if (reason !== 'logged_out' && reason !== 'replaced') {
           this.scheduleReconnect();
