@@ -3,6 +3,7 @@ import { createTelegramBot } from './telegram/bot';
 import { createHttpServer } from './server/http';
 import { config, compiledConfig } from './config';
 import { logger } from './utils/logger';
+import { markShuttingDown } from './utils/shutdown';
 import type { Telegraf } from 'telegraf';
 
 // Render solapa instancias durante deploys: la instancia previa sigue haciendo
@@ -73,6 +74,7 @@ async function main(): Promise<void> {
   });
 
   const shutdown = async (signal: string) => {
+    markShuttingDown();
     logger.info({ signal }, 'Shutting down...');
     telegramBot.stop(signal);
     await manager.disconnect('both');

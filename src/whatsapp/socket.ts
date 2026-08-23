@@ -4,6 +4,7 @@ import { createAuthState, clearAuthState } from './auth-state';
 import { createMessageHandler } from './message-handler';
 import { CompiledAccountConfig } from '../config/types';
 import { logger as baseLogger } from '../utils/logger';
+import { isShuttingDown } from '../utils/shutdown';
 const logger = baseLogger.child({ name: 'whatsapp-socket' });
 
 export class WhatsAppSocket extends EventEmitter {
@@ -44,6 +45,9 @@ export class WhatsAppSocket extends EventEmitter {
         emitOwnEvents: false,
         qrTimeout: 40000,
         connectTimeoutMs: 40000,
+        // No marcar presencia 'available': permite que el teléfono físico siga
+        // sonando/notificando aunque el bot esté conectado
+        markOnlineOnConnect: false,
       });
 
       this.setupEventHandlers(saveCreds);
@@ -109,6 +113,13 @@ export class WhatsAppSocket extends EventEmitter {
           this.cleanup();
           logger.info({ account: this.accountConfig.name }, '515 restart required — silent reconnect');
           this.connect().catch(e => this.emit('error', e));
+          return;
+        }
+
+        // Shutdown intencional (deploy/SIGTERM): la desconexión es esperada.
+        // Sin notificación a Telegram ni reconnect — el proceso va a morir.
+        if (isShuttingDown()) {
+          logger.info({ account: this.accountConfig.name, reason }, '🛑 Shutdown en curso — desconexión esperada por deploy, sin notificación');
           return;
         }
 
