@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events';
-import { WASocket, makeWASocket, DisconnectReason, fetchLatestBaileysVersion, ConnectionState, proto } from '@whiskeysockets/baileys';
+import { WASocket, makeWASocket, DisconnectReason, fetchLatestBaileysVersion, ConnectionState, proto, jidNormalizedUser } from '@whiskeysockets/baileys';
 import { createAuthState, clearAuthState } from './auth-state';
 import { createMessageHandler } from './message-handler';
 import { CompiledAccountConfig } from '../config/types';
@@ -17,6 +17,8 @@ export class WhatsAppSocket extends EventEmitter {
   private latestQR: string | null = null;
   private groupNames = new Map<string, string>();
   private suppressNextConnected = false;
+  private suppressLogoutNotification = false;
+  private warmupDone = false;
   private messageHandler: ((msg: proto.IWebMessageInfo) => void) | null = null;
 
   constructor(accountConfig: CompiledAccountConfig) {
@@ -88,8 +90,8 @@ export class WhatsAppSocket extends EventEmitter {
         } else {
           this.emit('connected');
         }
-        // Cache group names in background (no hot-path latency)
-        this.cacheGroupNames().catch(e => logger.warn({ account: this.accountConfig.name, error: e }, 'Failed to cache group names'));
+        // Cache group names + pre-warm E2E sessions in background (no hot-path latency)
+        this.prepareGroupsBackground().catch(e => logger.warn({ account: this.accountConfig.name, error: e }, 'Error en warmup de grupos'));
       } else if (connection === 'close') {
         this.isConnecting = false;
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode;
@@ -110,8 +112,15 @@ export class WhatsAppSocket extends EventEmitter {
           return;
         }
 
-        logger.warn({ account: this.accountConfig.name, reason, statusCode, errMsg }, 'Disconnected');
-        this.emit('disconnected', reason);
+        // Logout intencional: el close de Baileys (logged_out) ya lo notificaremos
+        // nosotros como 'user_requested' — suprimir el duplicado
+        if (this.suppressLogoutNotification) {
+          this.suppressLogoutNotification = false;
+          logger.info({ account: this.accountConfig.name }, 'Intentional logout — notificación duplicada suprimida');
+        } else {
+          logger.warn({ account: this.accountConfig.name, reason, statusCode, errMsg }, 'Disconnected');
+          this.emit('disconnected', reason);
+        }
 
         if (reason !== 'logged_out' && reason !== 'replaced') {
           this.scheduleReconnect();
@@ -160,9 +169,13 @@ export class WhatsAppSocket extends EventEmitter {
 
   async disconnect(): Promise<void> {
     if (this.socket) {
+      this.suppressLogoutNotification = true;
       try {
         await this.socket.logout();
       } catch (e) {
+        // logout falló sin disparar el close de Baileys: restaurar flag para
+        // no silenciar una desconexión real futura
+        this.suppressLogoutNotification = false;
         logger.warn({ account: this.accountConfig.name, error: e }, 'logout failed, forcing cleanup');
       }
       try { this.socket.ws.close(); } catch {}
@@ -190,20 +203,52 @@ export class WhatsAppSocket extends EventEmitter {
     return this.groupNames.get(jid) ?? jid;
   }
 
-  private async cacheGroupNames(): Promise<void> {
+  /**
+   * Al abrir conexión: cachea nombres de grupos y pre-construye las sesiones E2E
+   * (PreKey Bundles) con los miembros de cada grupo autorizado en background.
+   * Así el primer sendMessage del grupo no paga los roundtrips de PreKeys (~30s).
+   */
+  private async prepareGroupsBackground(): Promise<void> {
     if (!this.socket) return;
+    if (this.warmupDone) {
+      logger.debug({ account: this.accountConfig.name }, 'Warmup ya ejecutado, omitiendo');
+      return;
+    }
+    this.warmupDone = true;
+
+    const warmupEnabled = !['off', 'false', '0'].includes((process.env.WARMUP_SESSIONS ?? 'on').toLowerCase());
     const groups = Array.from(this.accountConfig.authorizedGroups);
+
     for (const jid of groups) {
       try {
+        // 1 sola llamada a groupMetadata: nombre + participantes
         const meta = await this.socket.groupMetadata(jid);
         if (meta.subject) this.groupNames.set(jid, meta.subject);
+
+        // Warmup: asertar sesiones Signal con todos los miembros (force=false:
+        // solo descarga PreKeys de quienes no tienen sesión aún)
+        if (warmupEnabled && meta.participants?.length) {
+          const t0 = Date.now();
+          const participants = meta.participants.map(p => jidNormalizedUser(p.id));
+          await (this.socket as any).assertSessions(participants, false);
+          logger.info({
+            account: this.accountConfig.name,
+            groupJid: jid,
+            miembros: participants.length,
+            ms: Date.now() - t0,
+          }, `🔥 grupo precalentado "${meta.subject}"`);
+        } else if (!warmupEnabled) {
+          logger.debug({ account: this.accountConfig.name, jid }, 'Warmup deshabilitado (WARMUP_SESSIONS=off)');
+        }
       } catch (e) {
-        logger.debug({ account: this.accountConfig.name, jid, error: e }, 'Failed to fetch group name');
+        logger.warn({ account: this.accountConfig.name, jid, error: e }, 'Falló warmup/nombre para grupo');
       }
+
+      // Pacing anti-rate-limit entre grupos
+      await new Promise(r => setTimeout(r, 1500));
     }
-    if (this.groupNames.size > 0) {
-      logger.info({ account: this.accountConfig.name, count: this.groupNames.size }, 'Cached group names');
-    }
+
+    logger.info({ account: this.accountConfig.name, total: groups.length }, '✅ Warmup de grupos completado');
   }
 
   private scheduleReconnect(): void {

@@ -46,6 +46,7 @@ export function createMessageHandler(
   const acc = accountConfig.name;
 
   const handler = async (msg: proto.IWebMessageInfo): Promise<void> => {
+    const receivedAt = Date.now();
     if (!msg.message) return;
     if (msg.key.fromMe) return;
 
@@ -159,8 +160,8 @@ export function createMessageHandler(
     }
 
     logger[sentOk ? 'info' : 'warn'](
-      { account: acc, chat: groupJid },
-      `${sentOk ? '💬 MATCH' : '💬 MATCH (envío falló)'} | de=${senderPhone} | kw="${matched[0]}" | resp="${response}"`
+      { account: acc, chat: groupJid, sendMs: Date.now() - receivedAt },
+      `${sentOk ? '💬 MATCH' : '💬 MATCH (envío falló)'} | de=${senderPhone} | kw="${matched[0]}" | resp="${response}" | ${Date.now() - receivedAt}ms`
     );
 
     onMatch({
