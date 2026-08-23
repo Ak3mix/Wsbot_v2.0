@@ -12,9 +12,9 @@ export interface MessageMatch {
 function extractPhone(jid: string): string {
   try {
     const decoded = jidDecode(jid);
-    if (decoded?.user) return decoded.user;
+    if (decoded?.user) return decoded.user.split(':')[0];
   } catch {}
-  return jid.split('@')[0];
+  return jid.split('@')[0].split(':')[0];
 }
 
 export function createMessageHandler(
@@ -24,7 +24,7 @@ export function createMessageHandler(
 ): (msg: proto.IWebMessageInfo) => void {
   const { authorizedUsers, authorizedGroups, keywordRules } = accountConfig;
 
-  return (msg: proto.IWebMessageInfo): void => {
+  const handler = async (msg: proto.IWebMessageInfo): Promise<void> => {
     if (!msg.message) return;
     if (msg.key.fromMe) return;
 
@@ -34,31 +34,48 @@ export function createMessageHandler(
     if (!senderJid || !groupJid) return;
 
     const senderPhone = extractPhone(senderJid);
-    const groupPhone = extractPhone(groupJid);
-
+    
+    // Validar usuario autorizado (sin prefijo/sufijo de dispositivo)
     if (!authorizedUsers.has(senderPhone)) return;
-    if (!authorizedGroups.has(groupPhone)) return;
+
+    // Validar grupo autorizado (soporta si guardas con o sin @g.us)
+    const cleanGroup = groupJid.replace('@g.us', '');
+    const isAuthorizedGroup = authorizedGroups.has(groupJid) || authorizedGroups.has(cleanGroup);
+    if (!isAuthorizedGroup) return;
 
     const text = extractText(msg.message);
     if (!text) return;
 
     for (const rule of keywordRules) {
-      if (rule.regex.test(text)) {
+      const regexMatch = rule.regex.exec(text);
+      if (regexMatch) {
         const response = rule.responses[Math.floor(Math.random() * rule.responses.length)];
         
-        socket.sendMessage(groupJid, { text: response }, { quoted: msg as any }).catch(console.error);
+        try {
+          await socket.sendMessage(groupJid, { text: response }, { quoted: msg as any });
+        } catch (sendError) {
+          console.error('Failed to send auto-reply (with quote):', sendError);
+          // Fallback: send without quoted
+          try {
+            await socket.sendMessage(groupJid, { text: response });
+          } catch (secondError) {
+            console.error('Failed to send auto-reply (no quote):', secondError);
+          }
+        }
         
         onMatch({
           account: accountConfig.name,
           groupJid,
           senderJid,
-          keyword: rule.matchedKeyword,
+          keyword: regexMatch[0],
           response,
         });
         break;
       }
     }
   };
+
+  return handler;
 }
 
 function extractText(message: proto.IMessage): string | null {

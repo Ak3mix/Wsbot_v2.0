@@ -17,6 +17,7 @@ export class WhatsAppSocket extends EventEmitter {
   private latestQR: string | null = null;
   private groupNames = new Map<string, string>();
   private suppressNextConnected = false;
+  private messageHandler: ((msg: proto.IWebMessageInfo) => void) | null = null;
 
   constructor(accountConfig: CompiledAccountConfig) {
     super();
@@ -57,6 +58,13 @@ export class WhatsAppSocket extends EventEmitter {
     if (!this.socket) return;
 
     this.socket.ev.on('creds.update', saveCreds);
+
+    // Create message handler ONCE per connection
+    this.messageHandler = createMessageHandler(
+      this.accountConfig,
+      this.socket,
+      (match) => this.emit('message-match', match)
+    );
 
     this.socket.ev.on('connection.update', (update: Partial<ConnectionState>) => {
       const { connection, lastDisconnect, qr } = update;
@@ -117,21 +125,10 @@ export class WhatsAppSocket extends EventEmitter {
     this.socket.ev.on('messages.upsert', ({ messages, type }) => {
       if (type === 'notify' || type === 'append') {
         for (const msg of messages) {
-          this.handleMessage(msg);
+          this.messageHandler?.(msg);
         }
       }
     });
-  }
-
-  private handleMessage(msg: proto.IWebMessageInfo): void {
-    if (!this.socket) return;
-    
-    const handler = createMessageHandler(
-      this.accountConfig,
-      this.socket,
-      (match) => this.emit('message-match', match)
-    );
-    handler(msg);
   }
 
   requestQR(): void {
@@ -157,6 +154,7 @@ export class WhatsAppSocket extends EventEmitter {
 
   clearQR(): void {
     this.latestQR = null;
+    this.messageHandler = null;
   }
 
   async disconnect(): Promise<void> {
