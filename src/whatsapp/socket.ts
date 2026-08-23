@@ -63,7 +63,8 @@ export class WhatsAppSocket extends EventEmitter {
     this.messageHandler = createMessageHandler(
       this.accountConfig,
       this.socket,
-      (match) => this.emit('message-match', match)
+      (match) => this.emit('message-match', match),
+      (jid) => this.getGroupName(jid)
     );
 
     this.socket.ev.on('connection.update', (update: Partial<ConnectionState>) => {
