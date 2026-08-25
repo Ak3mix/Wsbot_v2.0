@@ -1,4 +1,4 @@
-import { WASocket, proto, jidDecode } from '@whiskeysockets/baileys';
+import { WASocket, proto, jidDecode, jidNormalizedUser } from '@whiskeysockets/baileys';
 import { CompiledAccountConfig, CompiledKeywordRule } from '../config/types';
 import { logger as baseLogger } from '../utils/logger';
 
@@ -144,10 +144,24 @@ export function createMessageHandler(
       await socket.sendMessage(groupJid, { text: response }, { quoted: msg as any });
       sentOk = true;
     } catch (e1) {
+      const errStr = String((e1 as any)?.output?.statusCode ?? (e1 as Error)?.message ?? e1);
+      const isNoSession = /NoSession|no session|SessionError|NoMatchingSessions?/i.test(errStr);
       logger.warn(
-        { account: acc, chat: groupJid, error: e1 instanceof Error ? e1.message : String(e1) },
-        '⚠️ send con quote falló, reintentando sin quote'
+        { account: acc, chat: groupJid, error: e1 instanceof Error ? e1.message : String(e1), isNoSession },
+        '⚠️ send con quote falló'
       );
+      // Sesión Signal inexistente con algún participante: reconstruir y reintentar
+      if (isNoSession) {
+        try {
+          const meta = await socket.groupMetadata(groupJid);
+          const participants = (meta.participants ?? []).map(p => jidNormalizedUser(p.id));
+          await (socket as any).assertSessions(participants, true); // force=true: reconstruye
+          logger.info({ account: acc, chat: groupJid, miembros: participants.length }, '🔥 sesiones reconstruidas on-demand');
+        } catch (rebuildErr) {
+          logger.warn({ account: acc, chat: groupJid, error: rebuildErr }, 'Falló reconstrucción de sesiones');
+        }
+      }
+      // Reintentar sin quote (y con sesiones recién reconstruidas si aplica)
       try {
         await socket.sendMessage(groupJid, { text: response });
         sentOk = true;

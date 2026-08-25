@@ -218,6 +218,9 @@ export class WhatsAppSocket extends EventEmitter {
    * Al abrir conexión: cachea nombres de grupos y pre-construye las sesiones E2E
    * (PreKey Bundles) con los miembros de cada grupo autorizado en background.
    * Así el primer sendMessage del grupo no paga los roundtrips de PreKeys (~30s).
+   *
+   * Usa groupFetchAllParticipating: UNA query para todos los grupos (la versión
+   * anterior con groupMetadata por grupo moría con 408 en cada uno y tardaba horas).
    */
   private async prepareGroupsBackground(): Promise<void> {
     if (!this.socket) return;
@@ -225,41 +228,76 @@ export class WhatsAppSocket extends EventEmitter {
       logger.debug({ account: this.accountConfig.name }, 'Warmup ya ejecutado, omitiendo');
       return;
     }
-    this.warmupDone = true;
+
+    // El socket emite 'open' antes de estar listo para servir queries:
+    // las queries justo después mueren con 408 Timed Out. Darle aire.
+    await new Promise(r => setTimeout(r, 5000));
+
+    // Si durante la espera la conexión se cayó y reconectó, este warmup quedó
+    // huérfano: abortar sin marcar warmupDone para que la nueva conexión haga el suyo.
+    const mySocket = this.socket;
+    if (!mySocket || mySocket !== this.socket) return;
 
     const warmupEnabled = !['off', 'false', '0'].includes((process.env.WARMUP_SESSIONS ?? 'on').toLowerCase());
-    const groups = Array.from(this.accountConfig.authorizedGroups);
+    const authorized = this.accountConfig.authorizedGroups;
 
-    for (const jid of groups) {
-      try {
-        // 1 sola llamada a groupMetadata: nombre + participantes
-        const meta = await this.socket.groupMetadata(jid);
+    try {
+      // 1 sola llamada: metadatos de TODOS los grupos participantes
+      const all = await this.socket.groupFetchAllParticipating();
+      if (!this.socket || this.socket !== mySocket) return;
+
+      let warmed = 0;
+      for (const [jid, meta] of Object.entries(all)) {
+        // Solo grupos autorizados de esta cuenta
+        const cleanJid = jid.replace(/@g\.us$/, '');
+        if (!authorized.has(jid) && !authorized.has(cleanJid)) continue;
+
         if (meta.subject) this.groupNames.set(jid, meta.subject);
 
-        // Warmup: asertar sesiones Signal con todos los miembros (force=false:
-        // solo descarga PreKeys de quienes no tienen sesión aún)
         if (warmupEnabled && meta.participants?.length) {
-          const t0 = Date.now();
-          const participants = meta.participants.map(p => jidNormalizedUser(p.id));
-          await (this.socket as any).assertSessions(participants, false);
-          logger.info({
-            account: this.accountConfig.name,
-            groupJid: jid,
-            miembros: participants.length,
-            ms: Date.now() - t0,
-          }, `🔥 grupo precalentado "${meta.subject}"`);
-        } else if (!warmupEnabled) {
-          logger.debug({ account: this.accountConfig.name, jid }, 'Warmup deshabilitado (WARMUP_SESSIONS=off)');
+          try {
+            const t0 = Date.now();
+            const participants = meta.participants.map(p => jidNormalizedUser(p.id));
+            // force=false: solo descarga PreKeys de quienes aún no tienen sesión
+            await (this.socket as any).assertSessions(participants, false);
+            warmed++;
+            logger.info({
+              account: this.accountConfig.name,
+              groupJid: jid,
+              miembros: participants.length,
+              ms: Date.now() - t0,
+            }, `🔥 grupo precalentado "${meta.subject}"`);
+          } catch (e) {
+            logger.warn({ account: this.accountConfig.name, jid, error: e }, 'Falló assertSessions para grupo');
+          }
+          // Pacing anti-rate-limit entre grupos
+          await new Promise(r => setTimeout(r, 1500));
+          if (!this.socket || this.socket !== mySocket) return;
         }
-      } catch (e) {
-        logger.warn({ account: this.accountConfig.name, jid, error: e }, 'Falló warmup/nombre para grupo');
       }
 
-      // Pacing anti-rate-limit entre grupos
-      await new Promise(r => setTimeout(r, 1500));
+      this.warmupDone = true;
+      logger.info(
+        { account: this.accountConfig.name, autorizados: authorized.size, precalentados: warmed },
+        '✅ Warmup de grupos completado'
+      );
+    } catch (e) {
+      logger.warn(
+        { account: this.accountConfig.name, error: e },
+        '⚠️ Warmup falló (groupFetchAllParticipating) — se reintentará en la próxima reconexión'
+      );
+      this.scheduleWarmupRetry();
     }
+  }
 
-    logger.info({ account: this.accountConfig.name, total: groups.length }, '✅ Warmup de grupos completado');
+  /** Reintento único del warmup a los 60s si la query inicial falló. */
+  private scheduleWarmupRetry(): void {
+    setTimeout(() => {
+      if (this.socket && !this.warmupDone) {
+        logger.info({ account: this.accountConfig.name }, 'Reintentando warmup');
+        this.prepareGroupsBackground().catch(() => {});
+      }
+    }, 60_000);
   }
 
   private scheduleReconnect(): void {
