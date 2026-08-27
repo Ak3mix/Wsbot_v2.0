@@ -144,19 +144,21 @@ export function createMessageHandler(
       await socket.sendMessage(groupJid, { text: response }, { quoted: msg as any });
       sentOk = true;
     } catch (e1) {
-      const errStr = String((e1 as any)?.output?.statusCode ?? (e1 as Error)?.message ?? e1);
-      const isNoSession = /NoSession|no session|SessionError|NoMatchingSessions?/i.test(errStr);
+      const errStr = String((e1 as any)?.output?.message ?? (e1 as Error)?.message ?? e1);
+      // Cualquier error que implique una sesión Signal invalidada (por 515 restart,
+      // rotación de PreKey o contacto que regeneró claves) → reconstruir on-demand.
+      const isSessionError = /(NoSession|No matching sessions|SessionError|PreKeyError|Invalid PreKey|Bad MAC)/i.test(errStr);
       logger.warn(
-        { account: acc, chat: groupJid, error: e1 instanceof Error ? e1.message : String(e1), isNoSession },
+        { account: acc, chat: groupJid, error: e1 instanceof Error ? e1.message : errStr, isSessionError },
         '⚠️ send con quote falló'
       );
-      // Sesión Signal inexistente con algún participante: reconstruir y reintentar
-      if (isNoSession) {
+      // Sesión Signal inexistente o invalidada: reconstruir y reintentar
+      if (isSessionError) {
         try {
           const meta = await socket.groupMetadata(groupJid);
           const participants = (meta.participants ?? []).map(p => jidNormalizedUser(p.id));
           await (socket as any).assertSessions(participants, true); // force=true: reconstruye
-          logger.info({ account: acc, chat: groupJid, miembros: participants.length }, '🔥 sesiones reconstruidas on-demand');
+          logger.info({ account: acc, chat: groupJid, miembros: participants.length }, '🔥 sesiones reconstruidas on-demand (prekey)');
         } catch (rebuildErr) {
           logger.warn({ account: acc, chat: groupJid, error: rebuildErr }, 'Falló reconstrucción de sesiones');
         }
