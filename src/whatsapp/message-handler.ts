@@ -159,19 +159,26 @@ export function createMessageHandler(
           const participants = (meta.participants ?? []).map(p => jidNormalizedUser(p.id));
           await (socket as any).assertSessions(participants, true); // force=true: reconstruye
           logger.info({ account: acc, chat: groupJid, miembros: participants.length }, '🔥 sesiones reconstruidas on-demand (prekey)');
+          // Reintentar CON quote ahora que la sesión se reconstruyó
+          try {
+            await socket.sendMessage(groupJid, { text: response }, { quoted: msg as any });
+            sentOk = true;
+          } catch { /* cae al envío sin quote */ }
         } catch (rebuildErr) {
           logger.warn({ account: acc, chat: groupJid, error: rebuildErr }, 'Falló reconstrucción de sesiones');
         }
       }
       // Reintentar sin quote (y con sesiones recién reconstruidas si aplica)
-      try {
-        await socket.sendMessage(groupJid, { text: response });
-        sentOk = true;
-      } catch (e2) {
-        logger.error(
-          { account: acc, chat: groupJid, error: e2 instanceof Error ? e2.message : String(e2) },
-          '❌ send también falló sin quote'
-        );
+      if (!sentOk) {
+        try {
+          await socket.sendMessage(groupJid, { text: response });
+          sentOk = true;
+        } catch (e2) {
+          logger.error(
+            { account: acc, chat: groupJid, error: e2 instanceof Error ? e2.message : String(e2) },
+            '❌ send también falló sin quote'
+          );
+        }
       }
     }
 
