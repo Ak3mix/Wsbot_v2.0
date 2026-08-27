@@ -34,6 +34,7 @@ export interface MessageMatch {
   senderJid: string;
   keyword: string;
   response: string;
+  sendMs: number;
 }
 
 export function createMessageHandler(
@@ -187,12 +188,14 @@ export function createMessageHandler(
       `${sentOk ? '💬 MATCH' : '💬 MATCH (envío falló)'} | de=${senderPhone} | kw="${matched[0]}" | resp="${response}" | ${Date.now() - receivedAt}ms`
     );
 
+    const sendMs = Date.now() - receivedAt;
     onMatch({
       account: acc,
       groupJid,
       senderJid: msg.key.participant ?? groupJid,
       keyword: matched[0],
       response,
+      sendMs,
     });
   };
 

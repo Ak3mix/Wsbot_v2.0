@@ -151,13 +151,12 @@ export function createTelegramBot(manager: WhatsAppManager): Telegraf {
   });
 
   manager.on('disconnected', async (account: 'work' | 'personal', reason: string) => {
-    const key = `${account}:${reason}`;
     const now = Date.now();
-    const last = lastDisconnectNotify.get(key) ?? 0;
-    if (now - last < 60000) return; // cooldown 60s por razón
-    lastDisconnectNotify.set(key, now);
-    const reasonText = reason === 'user_requested' ? 'por usuario' : 
-                       reason === 'logged_out' ? 'sesión cerrada' : 
+    const last = lastDisconnectNotify.get(account) ?? 0;
+    if (now - last < 300000) return; // cooldown global 5min por cuenta (suprime ráfagas)
+    lastDisconnectNotify.set(account, now);
+    const reasonText = reason === 'user_requested' ? 'por usuario' :
+                       reason === 'logged_out' ? 'sesión cerrada' :
                        reason === 'replaced' ? 'sesión reemplazada' : reason;
     await bot.telegram.sendMessage(authorizedGroupId, `❌ ${account} desconectado (${reasonText})`);
   });
@@ -167,7 +166,8 @@ export function createTelegramBot(manager: WhatsAppManager): Telegraf {
     const groupName = manager.getGroupName(match.account, match.groupJid);
     const msg = `${accountLabel} respondió en "${groupName}"\n` +
                 `Keyword: "${match.keyword}"\n` +
-                `Respuesta: "${match.response}"`;
+                `Respuesta: "${match.response}"\n` +
+                `Latencia: ${match.sendMs}ms`;
     await bot.telegram.sendMessage(authorizedGroupId, msg);
   });
 

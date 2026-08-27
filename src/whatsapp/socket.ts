@@ -23,6 +23,7 @@ export class WhatsAppSocket extends EventEmitter {
   private suppressNextDisconnect = false; // para socket.close() no-emita 'disconnected'
   private warmupDone = false;
   private warmupInProgress = false;
+  private hasEverConnected = false;
   private messageHandler: ((msg: proto.IWebMessageInfo) => void) | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -91,6 +92,7 @@ export class WhatsAppSocket extends EventEmitter {
       if (connection === 'open') {
         this.isConnecting = false;
         this.isConnected = true;
+        this.hasEverConnected = true; // ← marcar antes del prime emit
         this.reconnectAttempts = 0;
         logger.info({ account: this.accountConfig.name }, 'Connected');
         if (this.suppressNextConnected) {
@@ -135,6 +137,9 @@ export class WhatsAppSocket extends EventEmitter {
         if (this.suppressNextDisconnect) {
           this.suppressNextDisconnect = false;
           logger.info({ account: this.accountConfig.name }, 'Intentional socket close — notificación duplicada suprimida');
+        } else if (!this.hasEverConnected && !this.suppressLogoutNotification) {
+          // Nunca estuvo conectado → desconexiones en pairing son ruido
+          logger.info({ account: this.accountConfig.name, reason, statusCode }, '🔇 Close sin sesión previa — ignorando desconexión');
         } else {
           // Logout intencional: el close de Baileys (logged_out) ya lo notificaremos
           // nosotros como 'user_requested' — suprimir el duplicado
