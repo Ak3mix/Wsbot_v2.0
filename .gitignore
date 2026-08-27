@@ -2,5 +2,8 @@ node_modules/
 dist/
 .env
 *.log
+log.txt
+NewLogs.txt
+*- Copy.txt
 .DS_Store
 *.tmp
